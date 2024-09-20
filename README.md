@@ -12,6 +12,6 @@ Create wallpapers with a frosted glass look by blurring and applying grain to an
 - language migration
 - redesign
 - star features
-- layers
+- layers & gradients
 - iOS support
 - MacOS/Android support
