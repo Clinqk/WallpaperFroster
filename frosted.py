@@ -284,8 +284,8 @@ class ImageEditor:
         # Create color balance filter
         r, g, b = red / 255, green / 255, blue / 255
         matrix = (r, 0, 0, 0,
-		0, g, 0, 0,
-		0, 0, b, 0)
+		  0, g, 0, 0,
+		  0, 0, b, 0)
         return image.convert('RGB', matrix)
 
 
