@@ -4,7 +4,6 @@ Create wallpapers with a frosted glass look by blurring and applying grain to an
 ![Screenshot](/screenshot.png)
 
 ### Planned:
-- vignetting
 - different grain types and fine control
 - optimisation
 - hardware acceleration
