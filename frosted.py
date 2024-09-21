@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import filedialog, ttk
 from PIL import Image, ImageTk, ImageFilter, ImageEnhance
-import numpy as np
+import cupy as cp
 from idlelib.tooltip import Hovertip
 import os
 import math
@@ -34,6 +34,7 @@ class ImageEditor:
         self.zoom_factor = 1.0
         self.zoom_entry = None
         self.original_filename = None
+        self.cache = {}  # Add cache dictionary
 
         self.create_widgets()
 
@@ -89,7 +90,7 @@ class ImageEditor:
 
         # Sliders
         sliders = [
-            ("Blur", 0, 200, 0.1, 100),
+            ("Blur", 0, 500, 0.1, 100),
             ("Brightness", 0.1, 2.0, 0.1, 1.0),
             ("Contrast", 0.1, 2.0, 0.1, 1.1),
             ("Saturation", 0.0, 2.0, 0.1, 1.1),
@@ -100,13 +101,13 @@ class ImageEditor:
             ("Color Mix", 0, 200, 1, 30),
             ("Color Mix Strength", 1, 200, 1, 20),
             ("Color Temperature", 2000, 10000, 100, 6500),
+            ("Vignette", 0, 1, 0.01, 0.1),
         ]
-
         for slider in sliders:
             self.create_scale(controls_frame, *slider)
 
     def create_scale(self, parent, label, from_, to, resolution, default=None):
-        frame = ttk.Frame(parent, padding="5 5 5 5")
+        frame = ttk.Frame(parent, padding="3 3 3 3")
         frame.pack(fill=tk.X, pady=0)
         ttk.Label(frame, text=label, width=16, font=self.custom_font).pack(side=tk.LEFT)
         scale = ttk.Scale(frame, from_=from_, to=to, orient=tk.HORIZONTAL, command=self.update_image)
@@ -174,6 +175,7 @@ class ImageEditor:
                 self.zoom_factor = 1.0
                 self.zoom_scale.set(100)
                 self.original_filename = os.path.splitext(os.path.basename(file_path))[0]
+                self.cache.clear()  # Clear cache when loading a new image
                 self.update_image()
             except Exception as e:
                 print(f"Error loading image: {e}")
@@ -221,39 +223,39 @@ class ImageEditor:
         self.update_zoom()
 
     def add_grain(self, image, strength):
-        img_array = np.array(image)
-        noise = np.random.normal(0, strength, img_array.shape)
-        noisy_img_array = np.clip(img_array.astype(np.float32) + noise, 0, 255).astype(np.uint8)
-        return Image.fromarray(noisy_img_array)
+        img_array = cp.array(image)
+        noise = cp.random.normal(0, strength, img_array.shape)
+        noisy_img_array = cp.clip(img_array.astype(cp.float32) + noise, 0, 255).astype(cp.uint8)
+        return Image.fromarray(cp.asnumpy(noisy_img_array))
 
     def add_speckle(self, image, intensity):
-        img_array = np.array(image)
-        noise = np.random.normal(0, intensity, img_array.shape)
+        img_array = cp.array(image)
+        noise = cp.random.normal(0, intensity, img_array.shape)
         noisy_img = img_array + img_array * noise
-        return Image.fromarray(np.clip(noisy_img, 0, 255).astype(np.uint8))
+        return Image.fromarray(cp.asnumpy(cp.clip(noisy_img, 0, 255).astype(cp.uint8)))
 
     def add_poisson(self, image, intensity):
-        img_array = np.array(image)
-        noise = np.random.poisson(img_array / 255.0 * 50.0 * intensity) / 50.0 * 255.0
-        noisy_img = img_array + noise.astype(np.uint8)
-        return Image.fromarray(np.clip(noisy_img, 0, 255).astype(np.uint8))
+        img_array = cp.array(image)
+        noise = cp.random.poisson(img_array / 255.0 * 50.0 * intensity) / 50.0 * 255.0
+        noisy_img = img_array + noise.astype(cp.uint8)
+        return Image.fromarray(cp.asnumpy(cp.clip(noisy_img, 0, 255).astype(cp.uint8)))
 
     def add_film_grain(self, image, strength):
-        img_array = np.array(image)
-        noise = np.random.normal(0, strength, img_array.shape)
+        img_array = cp.array(image)
+        noise = cp.random.normal(0, strength, img_array.shape)
         noisy_img = img_array + noise
-        return Image.fromarray(np.clip(noisy_img, 0, 255).astype(np.uint8))
+        return Image.fromarray(cp.asnumpy(cp.clip(noisy_img, 0, 255).astype(cp.uint8)))
 
     def add_coarse_grain(self, image, strength, size):
-        img_array = np.array(image)
+        img_array = cp.array(image)
         h, w, c = img_array.shape
         coarse_h = h // size + (1 if h % 10 else 0)
         coarse_w = w // size + (1 if w % 10 else 0)
-        coarse_noise = np.random.normal(0, strength, (coarse_h, coarse_w, c))
-        coarse_noise = np.repeat(np.repeat(coarse_noise, size, axis=0), size, axis=1)
+        coarse_noise = cp.random.normal(0, strength, (coarse_h, coarse_w, c))
+        coarse_noise = cp.repeat(cp.repeat(coarse_noise, size, axis=0), size, axis=1)
         coarse_noise = coarse_noise[:h, :w, :]
-        noisy_img_array = np.clip(img_array.astype(np.float32) + coarse_noise, 0, 255).astype(np.uint8)
-        return Image.fromarray(noisy_img_array)
+        noisy_img_array = cp.clip(img_array.astype(cp.float32) + coarse_noise, 0, 255).astype(cp.uint8)
+        return Image.fromarray(cp.asnumpy(noisy_img_array))
 
     def adjust_color_temperature(self, image, temperature):
         temperature = temperature / 100
@@ -262,7 +264,7 @@ class ImageEditor:
         else:
             red = temperature - 60
             red = 329.698727446 * (red ** -0.1332047592)
-            red = max(0, min(255, red))
+        red = max(0, min(255, red))
 
         if temperature <= 66:
             green = temperature
@@ -279,73 +281,128 @@ class ImageEditor:
         else:
             blue = temperature - 10
             blue = 138.5177312231 * math.log(blue) - 305.0447927307
-            blue = max(0, min(255, blue))
+        blue = max(0, min(255, blue))
 
         # Create color balance filter
         r, g, b = red / 255, green / 255, blue / 255
         matrix = (r, 0, 0, 0,
-		  0, g, 0, 0,
-		  0, 0, b, 0)
+                  0, g, 0, 0,
+                  0, 0, b, 0)
         return image.convert('RGB', matrix)
 
+    def add_vignette(self, image, strength):
+        width, height = image.size
+        center_x, center_y = width // 2, height // 2
+        max_dist = math.sqrt(center_x**2 + center_y**2)
+    
+        img_array = cp.array(image)
+        y, x = cp.ogrid[:height, :width]
+        dist = cp.sqrt((x - center_x)**2 + (y - center_y)**2)
+    
+        vignette = 1 - (dist / max_dist) * strength
+        vignette = cp.clip(vignette, 0, 1)
+    
+        vignette = cp.dstack([vignette] * 3)  # Apply to all color channels
+        vignetted_img = cp.clip(img_array * vignette, 0, 255).astype(cp.uint8)
+    
+        return Image.fromarray(cp.asnumpy(vignetted_img))
+
+    def apply_filters(self, img, params):
+        img = self.add_coarse_grain(img, params['color_mix'], int(params['color_mix_strength']))
+        img = ImageEnhance.Brightness(img).enhance(params['brightness'])
+        img = ImageEnhance.Contrast(img).enhance(params['contrast'])
+        img = ImageEnhance.Color(img).enhance(params['saturation'])
+        img = self.adjust_color_temperature(img, params['color_temperature'])
+        img = img.filter(ImageFilter.GaussianBlur(radius=params['blur']))
+        img = self.add_grain(img, params['grain_strength'])
+        img = self.add_speckle(img, params['speckle_noise'])
+        img = self.add_poisson(img, params['poisson_noise'])
+        img = self.add_film_grain(img, params['film_grain'])
+        img = self.add_vignette(img, params['vignette'])
+        return img
 
     def update_image(self, *args):
         if self.image:
-            # Apply filters
-            img = self.image.copy()
-            img = self.add_coarse_grain(img,
-                                        self.color_mix_scale.get(),
-                                        int(self.color_mix_strength_scale.get()))
-            img = img.filter(ImageFilter.GaussianBlur(radius=self.blur_scale.get()))
-            img = ImageEnhance.Brightness(img).enhance(self.brightness_scale.get())
-            img = ImageEnhance.Contrast(img).enhance(self.contrast_scale.get())
-            img = ImageEnhance.Color(img).enhance(self.saturation_scale.get())
-            img = self.add_grain(img, self.grain_strength_scale.get())
-            img = self.add_speckle(img, self.speckle_noise_scale.get())
-            img = self.add_poisson(img, self.poisson_noise_scale.get())
-            img = self.add_film_grain(img, self.film_grain_scale.get())
-            
-            color_temp = self.color_temperature_scale.get()
-            img = self.adjust_color_temperature(img, color_temp)
-            
-            self.current_image = img
+            # Get current parameter values
+            params = {
+                'blur': self.blur_scale.get(),
+                'brightness': self.brightness_scale.get(),
+                'contrast': self.contrast_scale.get(),
+                'saturation': self.saturation_scale.get(),
+                'grain_strength': self.grain_strength_scale.get(),
+                'speckle_noise': self.speckle_noise_scale.get(),
+                'poisson_noise': self.poisson_noise_scale.get(),
+                'film_grain': self.film_grain_scale.get(),
+                'color_mix': self.color_mix_scale.get(),
+                'color_mix_strength': self.color_mix_strength_scale.get(),
+                'color_temperature': self.color_temperature_scale.get(),
+                'vignette': self.vignette_scale.get()
+            }
 
-            # Update entry values
-            for attr in dir(self):
-                if attr.endswith('_scale'):
-                    scale = getattr(self, attr)
-                    entry_attr = attr.replace('_scale', '_entry')
-                    if hasattr(self, entry_attr):
-                        entry = getattr(self, entry_attr)
-                        entry.delete(0, tk.END)
-                        entry.insert(0, f"{scale.get():.2f}")
+            # Check cache for existing results
+            cache_key = tuple(params.items())
+            if cache_key in self.cache:
+                self.current_image = self.cache[cache_key]
+            else:
+                # Apply filters
+                img = self.image.copy()
+                img = self.apply_filters(img, params)
+                self.current_image = img
+                
+                # Cache the result
+                self.cache[cache_key] = img
 
-            # Resize for preview
-            width, height = img.size
-            new_width = int(width * self.zoom_factor)
-            new_height = int(height * self.zoom_factor)
-            preview_img = img.resize((new_width, new_height), Image.LANCZOS)
+            # Update preview
+            self.update_preview()
 
-            self.photo = ImageTk.PhotoImage(preview_img)
-            self.canvas.delete("all")
-            self.canvas_image = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
+    def update_preview(self):
+        # Update entry values
+        for attr in dir(self):
+            if attr.endswith('_scale'):
+                scale = getattr(self, attr)
+                entry_attr = attr.replace('_scale', '_entry')
+                if hasattr(self, entry_attr):
+                    entry = getattr(self, entry_attr)
+                    entry.delete(0, tk.END)
+                    entry.insert(0, f"{scale.get():.2f}")
 
-            # Update scroll region
-            self.canvas.config(scrollregion=self.canvas.bbox(self.canvas_image))
+        # Resize for preview
+        width, height = self.current_image.size
+        new_width = int(width * self.zoom_factor)
+        new_height = int(height * self.zoom_factor)
+        preview_img = self.current_image.resize((new_width, new_height), Image.LANCZOS)
+        self.photo = ImageTk.PhotoImage(preview_img)
+        self.canvas.delete("all")
+        self.canvas_image = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
+
+        # Update scroll region
+        self.canvas.config(scrollregion=self.canvas.bbox(self.canvas_image))
 
     def reset_all(self):
         default_values = {
-            'blur': 100, 'brightness': 1.0, 'contrast': 1.1, 'saturation': 1.1,
-            'grain_strength': 3.5, 'speckle_noise': 0, 'poisson_noise': 0,
-            'film_grain': 2.5, 'color_mix': 30, 'color_mix_strength': 20
+            'blur': 100,
+            'brightness': 1.0,
+            'contrast': 1.1,
+            'saturation': 1.1,
+            'grain_strength': 3.5,
+            'speckle_noise': 0,
+            'poisson_noise': 0,
+            'film_grain': 2.5,
+            'color_mix': 30,
+            'color_mix_strength': 20,
+            'color_temperature': 6500,
+            'vignette': 0.1
         }
+
         for attr, value in default_values.items():
             scale = getattr(self, f"{attr}_scale")
             entry = getattr(self, f"{attr}_entry")
             scale.set(value)
             entry.delete(0, tk.END)
             entry.insert(0, str(value))
+
         self.reset_zoom()
+        self.cache.clear()  # Clear the cache
         self.update_image()
 
 if __name__ == "__main__":
